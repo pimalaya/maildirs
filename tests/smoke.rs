@@ -284,9 +284,7 @@ fn check_store_cur() {
         let testflags = "FRS";
 
         assert_eq!(maildir.count_cur(), 0);
-        maildir
-            .store_cur(TEST_MAIL_BODY, testflags)
-            .unwrap();
+        maildir.store_cur(TEST_MAIL_BODY, testflags).unwrap();
         assert_eq!(maildir.count_cur(), 1);
 
         let mut iter = maildir.list_cur();

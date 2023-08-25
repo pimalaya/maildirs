@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Proper validation of folder names.
+- Proper validation of IDs and folder names.
 
 ## [0.0.2] - 2023-06-03
 

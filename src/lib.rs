@@ -1,5 +1,7 @@
 pub mod entry;
+pub mod flag;
 pub mod folder;
+mod validate;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -9,7 +11,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, ErrorKind, Write},
     path::{Path, PathBuf},
-    process, result,
+    process, str,
     sync::atomic::{AtomicUsize, Ordering},
     time::{self, SystemTime, UNIX_EPOCH},
 };
@@ -22,13 +24,12 @@ use thiserror::Error;
 const CUR: &str = "cur";
 const NEW: &str = "new";
 const TMP: &str = "tmp";
+#[cfg(unix)]
+const SEP: &str = ":";
+#[cfg(windows)]
+const SEP: &str = ";";
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(unix)]
-const INFORMATIONAL_SUFFIX_SEPARATOR: &str = ":";
-#[cfg(windows)]
-const INFORMATIONAL_SUFFIX_SEPARATOR: &str = ";";
 
 #[non_exhaustive]
 #[derive(Debug, Error)]
@@ -39,15 +40,21 @@ pub enum Error {
     GetEmailFileNameError(String),
     #[error("cannot copy email to the same path {0}")]
     CopyEmailSamePathError(PathBuf),
-    #[error("cannot get subfolder name")]
-    GetSubfolderNameError,
+    #[error("invalid id {0}")]
+    InvalidIdError(String),
+    #[error("invalid folder {0}")]
+    InvalidFolderError(String),
+    #[error("invalid flag {0}")]
+    InvalidFlagError(char),
+    #[error("{0} already exists")]
+    AlreadyExistsError(PathBuf),
+    #[error(transparent)]
+    Utf8Error(#[from] str::Utf8Error),
     #[error(transparent)]
     IoError(#[from] io::Error),
     #[error(transparent)]
     SystemTimeError(#[from] time::SystemTimeError),
 }
-
-type Result<T> = result::Result<T, Error>;
 
 /// The main entry point for this library. This struct can be
 /// instantiated from a path using the `from` implementations.
@@ -68,7 +75,7 @@ impl Maildir {
     ///
     /// This function will return an error if it cannot create
     /// the necessary subfolders.
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let maildir = Maildir::from(path);
         maildir.ensure_dirs()?;
         maildir.clean_tmp()?;
@@ -81,7 +88,7 @@ impl Maildir {
     }
 
     /// Ensures that the necessary subfolders exist.
-    fn ensure_dirs(&self) -> Result<()> {
+    fn ensure_dirs(&self) -> Result<(), Error> {
         for dir in &[&self.cur, &self.new, &self.tmp] {
             if !dir.exists() {
                 fs::create_dir_all(dir)?;
@@ -91,7 +98,7 @@ impl Maildir {
     }
 
     /// Remove any files in the tmp folder that are older than 36 hours.
-    pub fn clean_tmp(&self) -> Result<()> {
+    pub fn clean_tmp(&self) -> Result<(), Error> {
         for entry in fs::read_dir(&self.tmp)? {
             let path = entry?.path();
             // If the file is older than 36 hours, delete it
@@ -103,7 +110,8 @@ impl Maildir {
     }
 
     /// Creates a new folder in this maildir.
-    pub fn create_folder(&self, folder: &str) -> Result<Maildir> {
+    pub fn create_folder(&self, folder: &str) -> Result<Maildir, Error> {
+        validate::validate_folder(folder)?;
         let path = if self.root.join("maildirfolder").exists() {
             self.root.parent().unwrap().join(format!(
                 "{}.{folder}",
@@ -144,19 +152,19 @@ impl Maildir {
     /// Returns an iterator over the messages inside the `new` maildir folder.
     /// The order of messages in the iterator is not specified, and is not
     /// guaranteed to be stable over multiple invocations of this method.
-    pub fn list_new(&self) -> Result<MailEntries> {
+    pub fn list_new(&self) -> io::Result<MailEntries> {
         MailEntries::new(&self.new)
     }
 
     /// Returns an iterator over the messages inside the `cur` maildir folder.
     /// The order of messages in the iterator is not specified, and is not
     /// guaranteed to be stable over multiple invocations of this method.
-    pub fn list_cur(&self) -> Result<MailEntries> {
+    pub fn list_cur(&self) -> io::Result<MailEntries> {
         MailEntries::new(&self.cur)
     }
 
     /// Copies a message from the current maildir to the targetted maildir.
-    pub fn copy_to(&self, id: &str, target: &Maildir) -> Result<()> {
+    pub fn copy_to(&self, id: &str, target: &Maildir) -> Result<(), Error> {
         let entry = self
             .find(id)
             .ok_or_else(|| Error::FindEmailError(id.to_owned()))?;
@@ -176,7 +184,7 @@ impl Maildir {
     }
 
     /// Moves a message from the current maildir to the targetted maildir.
-    pub fn move_to(&self, id: &str, target: &Maildir) -> Result<()> {
+    pub fn move_to(&self, id: &str, target: &Maildir) -> Result<(), Error> {
         let entry = self
             .find(id)
             .ok_or_else(|| Error::FindEmailError(id.to_owned()))?;
@@ -188,83 +196,27 @@ impl Maildir {
         Ok(())
     }
 
-    /// Tries to find the message with the given id in the maildir. This
-    /// searches both the `new` and the `cur` folders.
+    /// Tries to find the message with the given id in the maildir.
+    ///
+    /// This searches both `new` and `cur`, but does not traverse subfolders.
     pub fn find(&self, id: &str) -> Option<MailEntry> {
-        let filter = |entry: &Result<MailEntry>| match *entry {
-            Err(_) => false,
-            Ok(ref e) => e.id() == id,
-        };
-
         self.list_new()
             .ok()?
             .chain(self.list_cur().ok()?)
-            .find(&filter)
-            .and_then(|e| e.ok())
+            .filter_map(Result::ok)
+            .find(|entry| entry.id() == id)
     }
 
-    fn update_flags<F>(&self, id: &str, flag_op: F) -> Result<()>
-    where
-        F: Fn(&str) -> String,
-    {
-        let filter = |entry: &Result<MailEntry>| match *entry {
-            Err(_) => false,
-            Ok(ref e) => e.id() == id,
-        };
-
-        match self.list_cur()?.find(&filter).map(|e| e.unwrap()) {
-            Some(m) => {
-                let src = m.path();
-                let mut dst = m.path().to_path_buf();
-                dst.pop();
-                dst.push(format!(
-                    "{}{}2,{}",
-                    m.id(),
-                    INFORMATIONAL_SUFFIX_SEPARATOR,
-                    flag_op(m.flags())
-                ));
-                fs::rename(src, dst)?;
-                Ok(())
-            }
-            None => Err(Error::FindEmailError(id.to_owned())),
-        }
-    }
-
-    /// Updates the flags for the message with the given id in the maildir. This
-    /// only searches the `cur` folder, because that's the folder where messages
-    /// have flags. Returns an error if the message was not found. All existing
-    /// flags are overwritten with the new flags provided.
-    pub fn set_flags(&self, id: &str, flags: &str) -> Result<()> {
-        self.update_flags(id, |_old_flags| normalize_flags(flags))
-    }
-
-    /// Adds the given flags to the message with the given id in the maildir.
-    /// This only searches the `cur` folder, because that's the folder where
-    /// messages have flags. Returns an error if the message was not found.
-    /// Flags are deduplicated, so setting a already-set flag has no effect.
-    pub fn add_flags(&self, id: &str, flags: &str) -> Result<()> {
-        let flag_merge = |old_flags: &str| {
-            let merged = String::from(old_flags) + flags;
-            normalize_flags(&merged)
-        };
-        self.update_flags(id, flag_merge)
-    }
-
-    /// Removes the given flags to the message with the given id in the maildir.
-    /// This only searches the `cur` folder, because that's the folder where
-    /// messages have flags. Returns an error if the message was not found. If
-    /// the message doesn't have the flag(s) to be removed, those flags are
-    /// ignored.
-    pub fn remove_flags(&self, id: &str, flags: &str) -> Result<()> {
-        let flag_strip =
-            |old_flags: &str| old_flags.chars().filter(|c| !flags.contains(*c)).collect();
-        self.update_flags(id, flag_strip)
-    }
-
-    /// Deletes the message with the given id in the maildir. This searches both
-    /// the `new` and the `cur` folders, and deletes the file from the
-    /// filesystem. Returns an error if no message was found with the given id.
-    pub fn delete(&self, id: &str) -> Result<()> {
+    /// Deletes the message with the given id in the maildir.
+    ///
+    /// This searches both the `new` and the `cur` folders, and deletes the file
+    /// from the filesystem.
+    ///
+    /// # Errors
+    ///
+    /// This method returns an error if no message was found with the given id,
+    /// or if there was an error when deleting the file.
+    pub fn delete(&self, id: &str) -> Result<(), Error> {
         match self.find(id) {
             Some(m) => Ok(fs::remove_file(m.path())?),
             None => Err(Error::FindEmailError(id.to_owned())),
@@ -275,26 +227,25 @@ impl Maildir {
     /// folder. Does not create the neccessary directories, so if in doubt call
     /// `create_dirs` before using `store_new`. Returns the Id of the inserted
     /// message on success.
-    pub fn store_new(&self, data: &[u8]) -> Result<String> {
-        self.store(data, true)
+    pub fn store_new(&self, data: &[u8]) -> Result<MailEntry, Error> {
+        self.store(data, true, None)
     }
 
     /// Stores the given message data as a new message file in the Maildir `cur`
-    /// folder, adding the given `flags` to it. The possible flags are explained
+    /// folder.
     /// e.g. at <https://cr.yp.to/proto/maildir.html> or
     /// <http://www.courier-mta.org/maildir.html>. Returns the Id of the
     /// inserted message on success.
-    pub fn store_cur(&self, data: &[u8]) -> Result<String> {
-        self.store(data, false)
+    pub fn store_cur(&self, data: &[u8]) -> Result<MailEntry, Error> {
+        self.store(data, false, None)
     }
 
-    fn store(&self, data: &[u8], new: bool) -> Result<String> {
+    fn store(&self, data: &[u8], new: bool, id: Option<String>) -> Result<MailEntry, Error> {
         // loop when conflicting filenames occur, as described at
-        // http://www.courier-mta.org/maildir.html this assumes that
-        // pid and hostname don't change.
-        let mut tmp_path = self.tmp.clone();
+        // <http://www.courier-mta.org/maildir.html> this assumes that pid and
+        // hostname don't change.
         let mut tmp_file;
-
+        let mut tmp_path = self.tmp.clone();
         loop {
             tmp_path.push(generate_tmp_id());
 
@@ -316,10 +267,12 @@ impl Maildir {
             }
         }
 
-        /// At this point, `file` is our new file at `tmppath`. If we leave the
-        /// scope of this function prior to successfully writing the file to its
-        /// final location, we need to ensure that we remove the temporary file.
-        /// This struct takes care of that detail.
+        /// At this point, `file` is our new file at `tmppath`. If we
+        /// leave the scope of this function prior to
+        /// successfully writing the file to its final
+        /// location, we need to ensure that we remove
+        /// the temporary file. This struct takes care
+        /// of that detail.
         struct RemoveOnDrop {
             path_to_remove: PathBuf,
         }
@@ -338,18 +291,19 @@ impl Maildir {
         tmp_file.write_all(data)?;
         tmp_file.sync_all()?;
 
-        let mut newpath = self.root.clone();
-        newpath.push(if new { NEW } else { CUR });
+        let id = id.map_or_else(|| generate_id(tmp_file), Ok)?;
 
-        let mut id = generate_id(tmp_file)?;
-        if !new {
-            id.push_str(INFORMATIONAL_SUFFIX_SEPARATOR);
-            id.push('2');
+        let mut new_path = self.root.clone();
+        if new {
+            new_path.push(NEW);
+            new_path.push(&id);
+        } else {
+            new_path.push(CUR);
+            new_path.push(format!("{id}{SEP}2"));
         }
-        newpath.push(&id);
 
-        fs::rename(&tmp_path, &newpath)?;
-        Ok(id)
+        fs::rename(&tmp_path, &new_path)?;
+        MailEntry::create(id, new_path, data)
     }
 }
 
@@ -362,14 +316,6 @@ impl<P: AsRef<Path>> From<P> for Maildir {
             tmp: p.as_ref().join(TMP),
         }
     }
-}
-
-fn normalize_flags(flags: &str) -> String {
-    let mut flags = flags.to_uppercase().bytes().collect::<Vec<_>>();
-    flags.sort_unstable();
-    flags.dedup();
-    // SAFETY: we know that the bytes in `flags` are all valid UTF-8
-    unsafe { String::from_utf8_unchecked(flags) }
 }
 
 fn generate_tmp_id() -> String {
@@ -386,7 +332,7 @@ fn generate_tmp_id() -> String {
     )
 }
 
-fn generate_id(file: File) -> Result<String> {
+fn generate_id(file: File) -> Result<String, Error> {
     let meta = file.metadata()?;
 
     #[cfg(unix)]
