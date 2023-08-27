@@ -9,13 +9,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{flag::Flag, validate::validate_id, Error, SEP};
+use crate::{validate::validate_id, Error, Flag, CUR, NEW, SEP, TMP};
 
 /// A struct representing a single email message inside the maildir.
 ///
 /// No parsing is done. This struct only holds the path to the message file,
 /// and handles file system operations. The struct can only be created by
 /// methods in [`Maildir`](crate::Maildir).
+#[derive(Debug)]
 pub struct MailEntry {
     id: String,
     flags: HashSet<Flag>,
@@ -27,14 +28,14 @@ impl MailEntry {
         let path = path.as_ref();
         let filename = std::str::from_utf8(
             path.file_name()
-                .ok_or(Error::GetEmailFileNameError(
+                .ok_or(Error::InvalidFilenameError(
                     path.to_string_lossy().to_string(),
                 ))?
                 .as_bytes(),
         )?;
 
-        let mut id = String::new();
         let mut split = filename.split(SEP).peekable();
+        let mut id = split.next().unwrap().to_string();
         while let Some(s) = split.next() {
             if split.peek().is_some() {
                 id.push_str(s);
@@ -51,7 +52,7 @@ impl MailEntry {
             .collect();
 
         Ok(MailEntry {
-            id: filename.to_string(),
+            id,
             flags,
             path: path.to_path_buf(),
         })
@@ -71,17 +72,11 @@ impl MailEntry {
         })
     }
 
-    fn flags_as_str(&self) -> String {
-        let mut flags: Vec<&str> = self.flags().map(AsRef::as_ref).collect();
-        flags.sort();
-        flags.join("")
-    }
-
     fn update(&mut self) -> Result<(), Error> {
         let new_file_name = format!(
             "{id}{SEP}2,{flags}",
             id = self.id,
-            flags = self.flags_as_str()
+            flags = self.flags_to_string()
         );
 
         let prev_path = self.path.clone();
@@ -119,9 +114,55 @@ impl MailEntry {
         &self.path
     }
 
+    /// Moves the email message to the `cur` directory.
+    fn move_to(&mut self, folder: &str) -> Result<(), Error> {
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| Error::NoParentError(self.path.clone()))?;
+
+        if parent.file_name() == Some(folder.as_ref()) {
+            return Ok(());
+        }
+
+        let new_path = parent
+            .parent()
+            .ok_or_else(|| Error::NoParentError(parent.to_path_buf()))?
+            .join(folder)
+            // We can unwrap here because we know that the parent is a directory
+            .join(self.path.file_name().unwrap());
+
+        fs::rename(&self.path, &new_path)?;
+        self.path = new_path;
+
+        Ok(())
+    }
+
+    /// Moves the email message to the `new` directory.
+    pub fn move_to_new(&mut self) -> Result<(), Error> {
+        self.move_to(NEW)
+    }
+
+    /// Moves the email message to the `cur` directory.
+    pub fn move_to_cur(&mut self) -> Result<(), Error> {
+        self.move_to(CUR)
+    }
+
+    /// Moves the email message to the `tmp` directory.
+    pub fn move_to_tmp(&mut self) -> Result<(), Error> {
+        self.move_to(TMP)
+    }
+
     /// Get the flags of the email message.
     pub fn flags(&self) -> impl Iterator<Item = &Flag> {
         self.flags.iter()
+    }
+
+    /// Get the flags of the email message as a string.
+    pub fn flags_to_string(&self) -> String {
+        let mut flags: Vec<&str> = self.flags().map(AsRef::as_ref).collect();
+        flags.sort();
+        flags.join("")
     }
 
     /// Set a flag on the email message.
@@ -181,14 +222,14 @@ impl MailEntry {
 /// particular entry, or if an invalid file was found in the maildir. Files
 /// starting with a dot (.) character in the maildir folder are ignored.
 pub struct MailEntries {
-    readdir: ReadDir,
+    readdir: Option<ReadDir>,
 }
 
 impl MailEntries {
-    pub(crate) fn new<P: AsRef<Path>>(path: P) -> io::Result<MailEntries> {
-        Ok(MailEntries {
-            readdir: read_dir(path)?,
-        })
+    pub(crate) fn new<P: AsRef<Path>>(path: P) -> MailEntries {
+        MailEntries {
+            readdir: read_dir(path).ok(),
+        }
     }
 }
 
@@ -196,17 +237,23 @@ impl Iterator for MailEntries {
     type Item = Result<MailEntry, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        for entry in self.readdir.by_ref() {
-            let path = match entry {
-                Err(e) => return Some(Err(e.into())),
-                Ok(e) => e.path(),
-            };
+        if let Some(ref mut readdir) = self.readdir {
+            for entry in readdir {
+                let path = match entry {
+                    Err(e) => return Some(Err(e.into())),
+                    Ok(e) => e.path(),
+                };
 
-            if path.is_dir() || path.starts_with(".") {
-                continue;
+                if path.is_dir()
+                    || path
+                        .file_name()
+                        .map_or(true, |n| n.to_string_lossy().starts_with("."))
+                {
+                    continue;
+                }
+
+                return Some(MailEntry::load(path));
             }
-
-            return Some(MailEntry::load(path));
         }
 
         None

@@ -1,7 +1,7 @@
 use crate::Error;
 
 /// Represents a maildir flag.
-#[derive(Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Flag {
     Passed,
     Replied,

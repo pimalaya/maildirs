@@ -3,22 +3,19 @@ name = "maildirpp"
 version = "0.1.0"
 description = "Rust library to manipulate Maildir++ emails."
 authors = [
-    "soywod <clement.douin@posteo.net>",
     "Knut Magnus Aasrud <km@aasrud.com>",
+    "soywod <clement.douin@posteo.net>",
 ]
 edition = "2021"
 license = "MIT"
 categories = ["email", "filesystem"]
 keywords = ["pim", "email", "maildir", "maildir++"]
 
+[dependencies]
+gethostname = "0.4"
+
 [dev-dependencies]
 mail-parser = "0.8"
 percent-encoding = "1.0.1"
 tempfile = "3.0.8"
 walkdir = "2.2.7"
-
-[dependencies]
-gethostname = "0.4"
-lending-iterator = "0.1.7"
-log = "0.4"
-thiserror = "1.0"

@@ -8,14 +8,14 @@ use std::{
 };
 
 use mail_parser::Message;
-use maildirpp::{Error, Maildir};
+use maildirpp::{Error, Flag, Maildir};
 use percent_encoding::percent_decode;
 use tempfile::tempdir;
 use walkdir::WalkDir;
 
-static TESTDATA_DIR: &str = "testdata";
-static MAILDIR_NAME: &str = "maildir";
-static SUBMAILDIRS_NAME: &str = "submaildirs";
+const TESTDATA_DIR: &str = "tests/testdata";
+const MAILDIR: &str = "maildir";
+const SUBMAILDIRS: &str = "submaildirs";
 
 // `cargo package` doesn't package files with certain characters, such as
 // colons, in the name, so we percent-decode the file names when copying the
@@ -76,7 +76,7 @@ where
 
 #[test]
 fn maildir_count() {
-    with_maildir(MAILDIR_NAME, |maildir| {
+    with_maildir(MAILDIR, |maildir| {
         assert_eq!(maildir.count_cur(), 1);
         assert_eq!(maildir.count_new(), 1);
     });
@@ -84,22 +84,24 @@ fn maildir_count() {
 
 #[test]
 fn maildir_list() {
-    with_maildir(MAILDIR_NAME, |maildir| {
+    with_maildir(MAILDIR, |maildir| {
         let mut iter = maildir.list_new();
         let entry1 = iter.next().unwrap().unwrap();
-        let msg1 = Message::parse(entry1.headers()).unwrap();
+        let bytes = entry1.to_bytes().unwrap();
+        let msg1 = Message::parse(&bytes).unwrap();
         assert_eq!(entry1.id(), "1463941010.5f7fa6dd4922c183dc457d033deee9d7");
         assert_eq!(msg1.subject(), Some("test"));
-        assert_eq!(entry1.is_seen(), false);
+        assert_eq!(entry1.has_flag(Flag::Seen), false);
         let second_entry = iter.next();
         assert!(second_entry.is_none());
 
         let mut iter = maildir.list_cur();
         let entry1 = iter.next().unwrap().unwrap();
-        let msg1 = Message::parse(entry1.headers()).unwrap();
+        let bytes = entry1.to_bytes().unwrap();
+        let msg1 = Message::parse(&bytes).unwrap();
         assert_eq!(entry1.id(), "1463868505.38518452d49213cb409aa1db32f53184");
         assert_eq!(msg1.subject(), Some("test"));
-        assert_eq!(entry1.is_seen(), true);
+        assert_eq!(entry1.has_flag(Flag::Seen), true);
         let entry2 = iter.next();
         assert!(entry2.is_none());
     })
@@ -107,9 +109,10 @@ fn maildir_list() {
 
 #[test]
 fn maildir_list_subdirs() {
-    with_maildir(SUBMAILDIRS_NAME, |maildir| {
+    with_maildir(SUBMAILDIRS, |maildir| {
         let subdirs: Vec<_> = maildir
             .folders()
+            .inspect(|d| println!("{:?}", d))
             .map(|dir| {
                 dir.unwrap()
                     .path()
@@ -129,7 +132,7 @@ fn maildir_list_subdirs() {
 
 #[test]
 fn maildir_find() {
-    with_maildir(MAILDIR_NAME, |maildir| {
+    with_maildir(MAILDIR, |maildir| {
         assert_eq!(
             maildir
                 .find("1463941010.5f7fa6dd4922c183dc457d033deee9d7")
@@ -147,7 +150,7 @@ fn maildir_find() {
 
 #[test]
 fn check_delete() {
-    with_maildir(MAILDIR_NAME, |maildir| {
+    with_maildir(MAILDIR, |maildir| {
         assert_eq!(
             maildir
                 .find("1463941010.5f7fa6dd4922c183dc457d033deee9d7")
@@ -171,8 +174,8 @@ fn check_delete() {
 
 #[test]
 fn check_copy_and_move() {
-    with_maildir(MAILDIR_NAME, |maildir| {
-        with_maildir(SUBMAILDIRS_NAME, |submaildir| {
+    with_maildir(MAILDIR, |maildir| {
+        with_maildir(SUBMAILDIRS, |submaildir| {
             let id = "1463868505.38518452d49213cb409aa1db32f53184";
 
             // check that we cannot copy a message from and to the same maildir
@@ -186,7 +189,7 @@ fn check_copy_and_move() {
             assert!(submaildir.find(id).is_none());
             // also check that the failed self-copy a few lines up didn't corrupt the
             // message file.
-            let body = maildir.find(id).unwrap().body().unwrap();
+            let body = maildir.find(id).unwrap().to_bytes().unwrap();
             let msg = Message::parse(&body).unwrap();
             assert!(msg.date().is_some());
 
@@ -209,29 +212,15 @@ fn check_copy_and_move() {
 
 #[test]
 fn mark_read() {
-    with_maildir(MAILDIR_NAME, |maildir| {
+    with_maildir(MAILDIR, |maildir| {
         assert_eq!(
             maildir
-                .move_new_to_cur("1463941010.5f7fa6dd4922c183dc457d033deee9d7")
+                .find("1463941010.5f7fa6dd4922c183dc457d033deee9d7")
+                .unwrap()
+                .move_to_cur()
                 .unwrap(),
             ()
         );
-    });
-}
-
-#[test]
-fn check_create_dirs() {
-    with_maildir_empty("maildir2", |maildir| {
-        assert!(!maildir.path().exists());
-        for name in &["cur", "new", "tmp"] {
-            assert!(!maildir.path().join(name).exists());
-        }
-
-        maildir.create_dirs().unwrap();
-        assert!(maildir.path().exists());
-        for name in &["cur", "new", "tmp"] {
-            assert!(maildir.path().join(name).exists());
-        }
     });
 }
 
@@ -257,18 +246,13 @@ Today is Boomtime, the 59th day of Discord in the YOLD 3183";
 #[test]
 fn check_store_new() {
     with_maildir_empty("maildir2", |maildir| {
-        maildir.create_dirs().unwrap();
-
         assert_eq!(maildir.count_new(), 0);
-        let id = maildir.store_new(TEST_MAIL_BODY);
-        assert!(id.is_ok());
+        let entry = maildir.store_new(TEST_MAIL_BODY).unwrap();
         assert_eq!(maildir.count_new(), 1);
 
-        let id = id.unwrap();
-        let entry = maildir.find(&id);
-        assert!(entry.is_some());
+        let entry = maildir.find(entry.id()).unwrap();
 
-        let msg = entry.unwrap().body().unwrap();
+        let msg = entry.to_bytes().unwrap();
         let msg = Message::parse(&msg).unwrap();
         assert_eq!(
             msg.body_text(0).unwrap(),
@@ -280,32 +264,41 @@ fn check_store_new() {
 #[test]
 fn check_store_cur() {
     with_maildir_empty("maildir2", |maildir| {
-        maildir.create_dirs().unwrap();
         let testflags = "FRS";
+        let want = vec![Flag::Flagged, Flag::Replied, Flag::Seen];
 
         assert_eq!(maildir.count_cur(), 0);
-        maildir.store_cur(TEST_MAIL_BODY, testflags).unwrap();
+        let mut entry = maildir.store_cur(TEST_MAIL_BODY).unwrap();
         assert_eq!(maildir.count_cur(), 1);
+
+        for flag in testflags.chars() {
+            entry.set_flag(flag.try_into().unwrap()).unwrap();
+        }
 
         let mut iter = maildir.list_cur();
         let first = iter.next().unwrap().unwrap();
-        assert_eq!(first.flags(), testflags);
+        let mut got = first.flags().copied().collect::<Vec<Flag>>();
+        got.sort_by(|f1, f2| f1.as_ref().cmp(f2.as_ref()));
+        assert_eq!(got, want);
     });
 }
 
 #[test]
 fn check_flag_fiddling() {
     with_maildir_empty("maildir2", |maildir| {
-        maildir.create_dirs().unwrap();
-        let id = maildir.store_cur(TEST_MAIL_BODY, "SR").unwrap();
+        let mut entry = maildir.store_cur(TEST_MAIL_BODY).unwrap();
+        entry.set_flag(Flag::Seen).unwrap();
+        entry.set_flag(Flag::Replied).unwrap();
 
         assert_eq!(maildir.count_cur(), 1);
-        assert_eq!(maildir.find(&id).unwrap().flags(), "RS");
-        maildir.remove_flags(&id, "FS").unwrap();
-        assert_eq!(maildir.find(&id).unwrap().flags(), "R");
-        maildir.add_flags(&id, "RF").unwrap();
-        assert_eq!(maildir.find(&id).unwrap().flags(), "FR");
-        maildir.set_flags(&id, "SF").unwrap();
-        assert_eq!(maildir.find(&id).unwrap().flags(), "FS");
+        assert_eq!(maildir.find(entry.id()).unwrap().flags_to_string(), "RS");
+        entry.unset_flag(Flag::Seen).unwrap();
+        assert_eq!(maildir.find(entry.id()).unwrap().flags_to_string(), "R");
+        entry.set_flag(Flag::Replied).unwrap();
+        entry.set_flag(Flag::Flagged).unwrap();
+        assert_eq!(maildir.find(entry.id()).unwrap().flags_to_string(), "FR");
+        entry.set_flag(Flag::Seen).unwrap();
+        entry.set_flag(Flag::Flagged).unwrap();
+        assert_eq!(maildir.find(entry.id()).unwrap().flags_to_string(), "FRS");
     });
 }

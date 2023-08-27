@@ -1,6 +1,6 @@
-pub mod entry;
-pub mod flag;
-pub mod folder;
+mod entry;
+mod error;
+mod flag;
 mod validate;
 
 #[cfg(unix)]
@@ -8,18 +8,18 @@ use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File, OpenOptions, ReadDir},
     io::{self, ErrorKind, Write},
     path::{Path, PathBuf},
     process, str,
     sync::atomic::{AtomicUsize, Ordering},
-    time::{self, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
-use entry::{MailEntries, MailEntry};
-use folder::Folders;
+pub use entry::{MailEntries, MailEntry};
+pub use error::Error;
+pub use flag::Flag;
 use gethostname::gethostname;
-use thiserror::Error;
 
 const CUR: &str = "cur";
 const NEW: &str = "new";
@@ -31,35 +31,11 @@ const SEP: &str = ";";
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-#[non_exhaustive]
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("cannot find email {0}")]
-    FindEmailError(String),
-    #[error("cannot get invalid file name from email {0}")]
-    GetEmailFileNameError(String),
-    #[error("cannot copy email to the same path {0}")]
-    CopyEmailSamePathError(PathBuf),
-    #[error("invalid id {0}")]
-    InvalidIdError(String),
-    #[error("invalid folder {0}")]
-    InvalidFolderError(String),
-    #[error("invalid flag {0}")]
-    InvalidFlagError(char),
-    #[error("{0} already exists")]
-    AlreadyExistsError(PathBuf),
-    #[error(transparent)]
-    Utf8Error(#[from] str::Utf8Error),
-    #[error(transparent)]
-    IoError(#[from] io::Error),
-    #[error(transparent)]
-    SystemTimeError(#[from] time::SystemTimeError),
-}
-
 /// The main entry point for this library. This struct can be
 /// instantiated from a path using the `from` implementations.
 /// The path passed in to the `from` should be the root of the
 /// maildir (the folder containing `cur`, `new`, and `tmp`).
+#[derive(Debug)]
 pub struct Maildir {
     root: PathBuf,
     cur: PathBuf,
@@ -110,6 +86,15 @@ impl Maildir {
     }
 
     /// Creates a new folder in this maildir.
+    ///
+    /// If the maildir is already a subfolder of another maildir, the new folder
+    /// will be created as a subfolder of the parent maildir.
+    ///
+    /// # Errors
+    ///
+    /// This method returns an error if the folder name is invalid, or if there
+    /// was an error from the file system when creating the folder and its
+    /// contents.
     pub fn create_folder(&self, folder: &str) -> Result<Maildir, Error> {
         validate::validate_folder(folder)?;
         let path = if self.root.join("maildirfolder").exists() {
@@ -127,40 +112,66 @@ impl Maildir {
         Maildir::new(path)
     }
 
-    /// Returns an iterator over the maildir subdirectories. The order of
-    /// subdirectories in the iterator is not specified, and is not guaranteed
-    /// to be stable over multiple invocations of this method.
-    pub fn folders(&self) -> Folders {
-        Folders::new(&self.root)
+    /// Returns an iterator over the maildir subdirectories.
+    ///
+    /// The order of subdirectories in the iterator is not specified, and is not
+    /// guaranteed to be stable over multiple invocations of this method. Note
+    /// also that it is assumed that the maildir root exists and is readable by
+    /// the running process. The returned iterator will be empty if that is not
+    /// the case.
+    pub fn folders(&self) -> Maildirs {
+        // TODO: Ensure subfolders function properly as well
+        Maildirs::new(&self.root)
     }
 
     /// Returns the number of messages found inside the `new` folder.
     pub fn count_new(&self) -> usize {
-        self.new.read_dir().map(|r| r.count()).unwrap_or_else(|_| 0)
+        MailEntries::new(&self.new).count()
     }
 
     /// Returns the number of messages found inside the `cur` folder.
     pub fn count_cur(&self) -> usize {
-        self.cur.read_dir().map(|r| r.count()).unwrap_or_else(|_| 0)
+        MailEntries::new(&self.cur)
+            .inspect(|e| println!("{:?}", e))
+            .count()
     }
 
     /// Returns the number of messages found inside the `tmp` folder.
     pub fn count_tmp(&self) -> usize {
-        self.tmp.read_dir().map(|r| r.count()).unwrap_or_else(|_| 0)
+        MailEntries::new(&self.tmp).count()
     }
 
     /// Returns an iterator over the messages inside the `new` maildir folder.
+    ///
     /// The order of messages in the iterator is not specified, and is not
-    /// guaranteed to be stable over multiple invocations of this method.
-    pub fn list_new(&self) -> io::Result<MailEntries> {
+    /// guaranteed to be stable over multiple invocations of this method. Note
+    /// also that it is assumed that the `new` folder exists and is readable by
+    /// the running process. The returned iterator will be empty if that is not
+    /// the case.
+    pub fn list_new(&self) -> MailEntries {
         MailEntries::new(&self.new)
     }
 
     /// Returns an iterator over the messages inside the `cur` maildir folder.
+    ///
     /// The order of messages in the iterator is not specified, and is not
-    /// guaranteed to be stable over multiple invocations of this method.
-    pub fn list_cur(&self) -> io::Result<MailEntries> {
+    /// guaranteed to be stable over multiple invocations of this method. Note
+    /// also that it is assumed that the `cur` folder exists and is readable by
+    /// the running process. The returned iterator will be empty if that is not
+    /// the case.
+    pub fn list_cur(&self) -> MailEntries {
         MailEntries::new(&self.cur)
+    }
+
+    /// Returns an iterator over the messages inside the `tmp` maildir folder.
+    ///
+    /// The order of messages in the iterator is not specified, and is not
+    /// guaranteed to be stable over multiple invocations of this method. Note
+    /// also that it is assumed that the `tmp` folder exists and is readable by
+    /// the running process. The returned iterator will be empty if that is not
+    /// the case.
+    pub fn list_tmp(&self) -> MailEntries {
+        MailEntries::new(&self.tmp)
     }
 
     /// Copies a message from the current maildir to the targetted maildir.
@@ -171,7 +182,7 @@ impl Maildir {
         let filename = entry
             .path()
             .file_name()
-            .ok_or_else(|| Error::GetEmailFileNameError(id.to_owned()))?;
+            .ok_or_else(|| Error::InvalidFilenameError(id.to_owned()))?;
 
         let src_path = entry.path();
         let dst_path = target.path().join("cur").join(filename);
@@ -191,7 +202,7 @@ impl Maildir {
         let filename = entry
             .path()
             .file_name()
-            .ok_or_else(|| Error::GetEmailFileNameError(id.to_owned()))?;
+            .ok_or_else(|| Error::InvalidFilenameError(id.to_owned()))?;
         fs::rename(entry.path(), target.path().join("cur").join(filename))?;
         Ok(())
     }
@@ -201,8 +212,7 @@ impl Maildir {
     /// This searches both `new` and `cur`, but does not traverse subfolders.
     pub fn find(&self, id: &str) -> Option<MailEntry> {
         self.list_new()
-            .ok()?
-            .chain(self.list_cur().ok()?)
+            .chain(self.list_cur())
             .filter_map(Result::ok)
             .find(|entry| entry.id() == id)
     }
@@ -224,23 +234,20 @@ impl Maildir {
     }
 
     /// Stores the given message data as a new message file in the Maildir `new`
-    /// folder. Does not create the neccessary directories, so if in doubt call
-    /// `create_dirs` before using `store_new`. Returns the Id of the inserted
-    /// message on success.
+    /// folder.
     pub fn store_new(&self, data: &[u8]) -> Result<MailEntry, Error> {
         self.store(data, true, None)
     }
 
     /// Stores the given message data as a new message file in the Maildir `cur`
     /// folder.
-    /// e.g. at <https://cr.yp.to/proto/maildir.html> or
-    /// <http://www.courier-mta.org/maildir.html>. Returns the Id of the
-    /// inserted message on success.
     pub fn store_cur(&self, data: &[u8]) -> Result<MailEntry, Error> {
         self.store(data, false, None)
     }
 
     fn store(&self, data: &[u8], new: bool, id: Option<String>) -> Result<MailEntry, Error> {
+        self.ensure_dirs()?;
+
         // loop when conflicting filenames occur, as described at
         // <http://www.courier-mta.org/maildir.html> this assumes that pid and
         // hostname don't change.
@@ -318,6 +325,50 @@ impl<P: AsRef<Path>> From<P> for Maildir {
     }
 }
 
+/// An iterator of maildirs subdirectories, typically used to iterate over
+/// subfolders.
+///
+/// This iterator produces an [`io::Result<Maildir>`], which can be an `Err` if
+/// an error was encountered while trying to read file system properties on a
+/// particular entry. Only subdirectories starting with a single period are
+/// included.
+pub struct Maildirs {
+    readdir: Option<ReadDir>,
+}
+
+impl Maildirs {
+    pub(crate) fn new<P: AsRef<Path>>(path: P) -> Maildirs {
+        Maildirs {
+            readdir: fs::read_dir(path).ok(),
+        }
+    }
+}
+
+impl Iterator for Maildirs {
+    type Item = io::Result<Maildir>;
+
+    fn next(&mut self) -> Option<io::Result<Maildir>> {
+        if let Some(ref mut readdir) = self.readdir {
+            for entry in readdir {
+                let path = match entry {
+                    Err(e) => return Some(Err(e)),
+                    Ok(e) => e.path(),
+                };
+
+                let filename = path.file_name()?.to_string_lossy();
+
+                if !filename.starts_with(".") || filename.starts_with("..") || !path.is_dir() {
+                    continue;
+                }
+
+                return Some(Ok(Maildir::from(path)));
+            }
+        }
+
+        None
+    }
+}
+
 fn generate_tmp_id() -> String {
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     let secs = ts.as_secs();
@@ -359,5 +410,3 @@ fn generate_id(file: File) -> Result<String, Error> {
         generate_tmp_id()
     ))
 }
-
-// TODO: Folder name validation
