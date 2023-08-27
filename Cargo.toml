@@ -1,7 +1,7 @@
 [package]
 name = "maildirpp"
 version = "0.1.0"
-description = "Rust library to manipulate Maildir++ emails."
+description = "Maildir++ library for Rust"
 authors = [
     "Knut Magnus Aasrud <km@aasrud.com>",
     "soywod <clement.douin@posteo.net>",
@@ -10,12 +10,13 @@ edition = "2021"
 license = "MIT"
 categories = ["email", "filesystem"]
 keywords = ["pim", "email", "maildir", "maildir++"]
+repository = "https://git.sr.ht/~kmaasrud/maildirpp"
 
 [dependencies]
-gethostname = "0.4"
+gethostname = "0.4.3"
 
 [dev-dependencies]
-mail-parser = "0.8"
-percent-encoding = "1.0.1"
-tempfile = "3.0.8"
-walkdir = "2.2.7"
+mail-parser = "0.8.2"
+percent-encoding = "2.3.0"
+tempfile = "3.8.0"
+walkdir = "2.3.3"
