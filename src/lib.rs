@@ -396,17 +396,9 @@ fn generate_id(file: File) -> Result<String, Error> {
     #[cfg(windows)]
     let ino: u64 = 0;
 
-    #[cfg(unix)]
-    let size = meta.size();
-    #[cfg(windows)]
-    let size = meta.file_size();
-
     let hostname = gethostname()
         .into_string()
         .expect("hostname is not valid UTF-8. how the fuck did you achieve that?");
 
-    Ok(format!(
-        "{}V{dev}I{ino}.{hostname},S={size}",
-        generate_tmp_id()
-    ))
+    Ok(format!("{}V{dev}I{ino}.{hostname}", generate_tmp_id()))
 }

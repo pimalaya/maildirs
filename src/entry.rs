@@ -24,7 +24,7 @@ pub struct MailEntry {
 }
 
 impl MailEntry {
-    fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+    fn from_path<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let path = path.as_ref();
         let filename = std::str::from_utf8(
             path.file_name()
@@ -252,7 +252,7 @@ impl Iterator for MailEntries {
                     continue;
                 }
 
-                return Some(MailEntry::load(path));
+                return Some(MailEntry::from_path(path));
             }
         }
 
