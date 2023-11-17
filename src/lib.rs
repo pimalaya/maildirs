@@ -126,22 +126,25 @@ impl Maildir {
 
     /// Returns the number of messages found inside the `new` folder.
     pub fn count_new(&self) -> usize {
-        MailEntries::new(&self.new).count()
+        MailEntries::new(&self.new, false).count()
     }
 
     /// Returns the number of messages found inside the `cur` folder.
     pub fn count_cur(&self) -> usize {
-        MailEntries::new(&self.cur)
+        MailEntries::new(&self.cur, false)
             .inspect(|e| println!("{:?}", e))
             .count()
     }
 
     /// Returns the number of messages found inside the `tmp` folder.
     pub fn count_tmp(&self) -> usize {
-        MailEntries::new(&self.tmp).count()
+        MailEntries::new(&self.tmp, false).count()
     }
 
     /// Returns an iterator over the messages inside the `new` maildir folder.
+    ///
+    /// This will move all mail entries it encounters into the `cur` directory.
+    /// If that is undesired, have look at the [`Maildir::peek_new`] method.
     ///
     /// The order of messages in the iterator is not specified, and is not
     /// guaranteed to be stable over multiple invocations of this method. Note
@@ -149,7 +152,7 @@ impl Maildir {
     /// the running process. The returned iterator will be empty if that is not
     /// the case.
     pub fn list_new(&self) -> MailEntries {
-        MailEntries::new(&self.new)
+        MailEntries::new(&self.new, true)
     }
 
     /// Returns an iterator over the messages inside the `cur` maildir folder.
@@ -160,7 +163,7 @@ impl Maildir {
     /// the running process. The returned iterator will be empty if that is not
     /// the case.
     pub fn list_cur(&self) -> MailEntries {
-        MailEntries::new(&self.cur)
+        MailEntries::new(&self.cur, false)
     }
 
     /// Returns an iterator over the messages inside the `tmp` maildir folder.
@@ -171,7 +174,19 @@ impl Maildir {
     /// the running process. The returned iterator will be empty if that is not
     /// the case.
     pub fn list_tmp(&self) -> MailEntries {
-        MailEntries::new(&self.tmp)
+        MailEntries::new(&self.tmp, false)
+    }
+
+    /// Returns an iterator over the messages inside the `new` maildir folder,
+    /// without moving them to `cur`.
+    ///
+    /// The order of messages in the iterator is not specified, and is not
+    /// guaranteed to be stable over multiple invocations of this method. Note
+    /// also that it is assumed that the `new` folder exists and is readable by
+    /// the running process. The returned iterator will be empty if that is not
+    /// the case.
+    pub fn peek_new(&self) -> MailEntries {
+        MailEntries::new(&self.new, true)
     }
 
     /// Copies a message from the current maildir to the targetted maildir.
@@ -357,7 +372,7 @@ impl Iterator for Maildirs {
 
                 let filename = path.file_name()?.to_string_lossy();
 
-                if !filename.starts_with(".") || filename.starts_with("..") || !path.is_dir() {
+                if !filename.starts_with('.') || filename.starts_with("..") || !path.is_dir() {
                     continue;
                 }
 

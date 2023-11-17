@@ -114,7 +114,7 @@ impl MailEntry {
         &self.path
     }
 
-    /// Moves the email message to the `cur` directory.
+    /// Moves the mail entry
     fn move_to(&mut self, folder: &str) -> Result<(), Error> {
         let parent = self
             .path
@@ -223,12 +223,14 @@ impl MailEntry {
 /// starting with a dot (.) character in the maildir folder are ignored.
 pub struct MailEntries {
     readdir: Option<ReadDir>,
+    move_to_cur: bool,
 }
 
 impl MailEntries {
-    pub(crate) fn new<P: AsRef<Path>>(path: P) -> MailEntries {
+    pub(crate) fn new<P: AsRef<Path>>(path: P, move_to_cur: bool) -> MailEntries {
         MailEntries {
             readdir: read_dir(path).ok(),
+            move_to_cur,
         }
     }
 }
@@ -247,12 +249,22 @@ impl Iterator for MailEntries {
                 if path.is_dir()
                     || path
                         .file_name()
-                        .map_or(true, |n| n.to_string_lossy().starts_with("."))
+                        .map_or(true, |n| n.to_string_lossy().starts_with('.'))
                 {
                     continue;
                 }
 
-                return Some(MailEntry::from_path(path));
+                let mut entry = MailEntry::from_path(path);
+
+                if self.move_to_cur {
+                    if let Ok(ref mut entry) = entry {
+                        if let Err(e) = entry.move_to_cur() {
+                            return Some(Err(e));
+                        }
+                    }
+                }
+
+                return Some(entry);
             }
         }
 
