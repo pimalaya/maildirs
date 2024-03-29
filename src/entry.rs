@@ -113,6 +113,11 @@ impl MailEntry {
         &self.path
     }
 
+    /// Takes ownership of the [`MailEntry`] and returns the base [`PathBuf`]
+    pub fn to_path_buf(self) -> PathBuf {
+        self.path
+    }
+
     /// Moves the mail entry
     fn move_to(&mut self, folder: &str) -> Result<(), Error> {
         let parent = self
