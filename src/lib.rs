@@ -25,9 +25,9 @@ const CUR: &str = "cur";
 const NEW: &str = "new";
 const TMP: &str = "tmp";
 #[cfg(unix)]
-const SEP: &str = ":";
+const SEP: &str = ":2,";
 #[cfg(windows)]
-const SEP: &str = ";";
+const SEP: &str = ";2,";
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -66,9 +66,7 @@ impl Maildir {
     /// Ensures that the necessary subfolders exist.
     fn ensure_dirs(&self) -> Result<(), Error> {
         for dir in &[&self.cur, &self.new, &self.tmp] {
-            if !dir.exists() {
-                fs::create_dir_all(dir)?;
-            }
+            fs::create_dir_all(dir)?;
         }
         Ok(())
     }
@@ -77,8 +75,9 @@ impl Maildir {
     pub fn clean_tmp(&self) -> Result<(), Error> {
         for entry in fs::read_dir(&self.tmp)? {
             let path = entry?.path();
+            let metadata = path.metadata()?;
             // If the file is older than 36 hours, delete it
-            if path.is_file() && path.metadata()?.modified()?.elapsed()?.as_secs() > 36 * 60 * 60 {
+            if metadata.is_file() && metadata.modified()?.elapsed()?.as_secs() > 36 * 60 * 60 {
                 fs::remove_file(path)?;
             }
         }
@@ -289,12 +288,10 @@ impl Maildir {
             }
         }
 
-        /// At this point, `file` is our new file at `tmppath`. If we
-        /// leave the scope of this function prior to
-        /// successfully writing the file to its final
-        /// location, we need to ensure that we remove
-        /// the temporary file. This struct takes care
-        /// of that detail.
+        /// At this point, `file` is our new file at `tmppath`. If we leave the
+        /// scope of this function prior to successfully writing the file to its
+        /// final location, we need to ensure that we remove the temporary file.
+        /// This struct takes care of that detail.
         struct RemoveOnDrop {
             path_to_remove: PathBuf,
         }

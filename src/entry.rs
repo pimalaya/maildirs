@@ -34,25 +34,20 @@ impl MailEntry {
                 .as_bytes(),
         )?;
 
-        let mut split = filename.split(SEP).peekable();
-        let mut id = split.next().unwrap().to_string();
-        while let Some(s) = split.next() {
-            if split.peek().is_some() {
-                id.push_str(s);
-            }
-        }
-
-        let flags = filename
-            .split(&format!("{SEP}2,")) // We are ignoring any experimental info (marked `:1,`)
-            .last() // Allow the occurence of `:2,` in the filename
-            .unwrap_or("")
-            .chars()
-            .map(TryFrom::try_from)
-            .filter_map(Result::ok)
-            .collect();
+        let (id, flags) = match filename.rsplit_once(SEP) {
+            Some((id, flags)) => (
+                id,
+                flags
+                    .chars()
+                    .map(TryFrom::try_from)
+                    .filter_map(Result::ok)
+                    .collect(),
+            ),
+            None => (filename, HashSet::new()),
+        };
 
         Ok(MailEntry {
-            id,
+            id: id.to_string(),
             flags,
             path: path.to_path_buf(),
         })
@@ -74,7 +69,7 @@ impl MailEntry {
 
     fn update(&mut self) -> Result<(), Error> {
         let new_file_name = format!(
-            "{id}{SEP}2,{flags}",
+            "{id}{SEP}{flags}",
             id = self.id,
             flags = self.flags_to_string()
         );
@@ -82,12 +77,16 @@ impl MailEntry {
         let prev_path = self.path.clone();
         let new_path = self.path.with_file_name(new_file_name);
 
-        if new_path.exists() {
-            return Err(Error::AlreadyExistsError(new_path));
+        match fs::rename(prev_path, &self.path) {
+            Ok(_) => {
+                self.path = new_path;
+                Ok(())
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                Err(Error::AlreadyExistsError(new_path))
+            }
+            Err(e) => Err(e.into()),
         }
-
-        self.path = new_path;
-        Ok(fs::rename(prev_path, &self.path)?)
     }
 
     /// Get the unique identifier of the email message.
