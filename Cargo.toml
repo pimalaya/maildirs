@@ -1,22 +1,25 @@
 [package]
-name = "maildirpp"
-version = "0.3.0"
-description = "Maildir++ library for Rust"
-authors = [
-    "Knut Magnus Aasrud <km@aasrud.com>",
-    "soywod <clement.douin@posteo.net>",
-]
+name = "maildirs"
+version = "0.1.0"
+description = "Rust library to manage collections of Maildir"
+homepage = "https://git.sr.ht/~soywod/maildir"
+documentation = "https://docs.rs/maildirs/latest/maildirs/"
+repository = "https://git.sr.ht/~soywod/maildir"
+authors = ["soywod <clement.douin@posteo.net>"]
 edition = "2021"
 license = "MIT"
-categories = ["email", "filesystem"]
-keywords = ["pim", "email", "maildir", "maildir++"]
-repository = "https://git.sr.ht/~kmaasrud/maildirpp"
+categories = ["email", "network-programming"]
+keywords = ["email", "maildir", "imap", "smtp", "sendmail"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs", "--document-private-items"]
+
+[dev-dependencies]
+mail-parser = "0.9.3"
+percent-encoding = "2.3"
+tempfile = "3.8"
+walkdir = "2.3"
 
 [dependencies]
 gethostname = "0.4.3"
-
-[dev-dependencies]
-mail-parser = "0.8.2"
-percent-encoding = "2.3.0"
-tempfile = "3.8.0"
-walkdir = "2.3.3"

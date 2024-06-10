@@ -1,19 +1,5 @@
-# `maildirpp`
+# `maildirs`
 
-Very simple Rust library to manipulate emails in the
-[Maildir++](http://www.courier-mta.org/imap/README.maildirquota.html) format.
-Does not do any email parsing, but provides a simple API to do operations on the
-maildir structure or on the emails themselves.
+Rust library to manage collections of email folders following the [Maildir++](http://www.courier-mta.org/imap/README.maildirquota.html) format.
 
-[Documentation](https://docs.rs/maildirpp) - [Source](https://git.sr.ht/~kmaasrud/maildirpp) - [Crate](https://lib.rs/crates/maildirpp)
-
-Any bugs or feature requests should be reported to the [ticket
-tracker](https://todo.sr.ht/~kmaasrud/maildirpp). If you have a question or a
-patch, send them to my [inbox](https://lists.sr.ht/~kmaasrud/inbox).
-
-## Implemented features
-
-- [x] Basic maildir operations
-- [x] Flags
-- [x] Folders
-- [ ] Quotas
+*TODO*
