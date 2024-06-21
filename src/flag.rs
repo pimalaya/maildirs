@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::{Error, Result};
 
 /// Represents a maildir flag.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -27,15 +27,15 @@ impl AsRef<str> for Flag {
 impl TryFrom<char> for Flag {
     type Error = Error;
 
-    fn try_from(s: char) -> Result<Self, Error> {
-        match s {
+    fn try_from(c: char) -> Result<Self> {
+        match c {
             'P' => Ok(Flag::Passed),
             'R' => Ok(Flag::Replied),
             'S' => Ok(Flag::Seen),
             'T' => Ok(Flag::Trashed),
             'D' => Ok(Flag::Draft),
             'F' => Ok(Flag::Flagged),
-            _ => Err(Error::InvalidFlagError(s)),
+            _ => Err(Error::InvalidFlagError(c)),
         }
     }
 }

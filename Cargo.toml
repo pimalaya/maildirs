@@ -16,10 +16,11 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs", "--document-private-items"]
 
 [dev-dependencies]
-mail-parser = "0.9.3"
+mail-parser = "0.9"
 percent-encoding = "2.3"
 tempfile = "3.8"
-walkdir = "2.3"
 
 [dependencies]
-gethostname = "0.4.3"
+gethostname = "0.4"
+thiserror = "1.0"
+walkdir = "2.3"
