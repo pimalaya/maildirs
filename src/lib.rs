@@ -7,7 +7,7 @@ mod maildir;
 pub use self::{
     error::{Error, Result},
     flag::Flag,
-    maildir::{Maildir, MaildirBuilder, MaildirEntry, Maildirs},
+    maildir::{Maildir, MaildirBuilder, MaildirEntry, Maildirs, MaildirsEntry},
 };
 
 // #[cfg(unix)]

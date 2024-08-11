@@ -8,7 +8,7 @@ use std::{
     fs::{self, File, OpenOptions},
     hash::{Hash, Hasher},
     io::{self, BufRead, BufReader, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process,
     sync::atomic::{AtomicUsize, Ordering},
     thread,
@@ -226,14 +226,6 @@ impl Maildir {
         self.write(contents, None, true, None)
     }
 
-    pub fn write_new_with(
-        &self,
-        contents: impl AsRef<[u8]>,
-        flags: impl IntoIterator<Item = Flag>,
-    ) -> Result<MaildirEntry> {
-        self.write(contents, flags, true, None)
-    }
-
     pub fn write_cur(
         &self,
         contents: impl AsRef<[u8]>,
@@ -400,27 +392,47 @@ impl Maildirs {
         &self.root
     }
 
-    pub fn add(&self, mdir: impl Into<Maildir>) -> Result<Maildir> {
-        let mdir = mdir.into();
+    fn maildir(&self, name: impl AsRef<str>) -> Maildir {
+        let path = if self.maildirpp {
+            let mut path = self.root.clone();
+
+            for component in PathBuf::from(name.as_ref()).components() {
+                if let Component::Normal(component) = component {
+                    let component = component.to_string_lossy();
+                    path.push(format!(".{}", component.trim_start_matches('.')))
+                }
+            }
+
+            path
+        } else {
+            self.root.join(name.as_ref())
+        };
+
+        MaildirBuilder::new()
+            .with_info_separator(self.info_separator)
+            .build(path)
+    }
+
+    pub fn create(&self, name: impl ToString) -> Result<Maildir> {
+        let mdir = self.maildir(name.to_string());
         mdir.create_all()?;
         Ok(mdir)
     }
 
-    pub fn create(&self, name: impl ToString) -> Result<Maildir> {
-        let name = if self.maildirpp {
-            format!(".{}", name.to_string())
-        } else {
-            name.to_string()
-        };
-
-        let mdir = MaildirBuilder::new()
-            .with_info_separator(self.info_separator)
-            .build(self.root.join(name));
-
-        self.add(mdir)
+    pub fn find(&self, name: impl AsRef<str>) -> Option<Maildir> {
+        Some(self.maildir(name)).filter(|mdir| mdir.exists())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = Maildir> + '_ {
+    pub fn get(&self, name: impl AsRef<str>) -> Result<Maildir> {
+        let name = name.as_ref();
+
+        match self.find(name) {
+            Some(mdir) => Ok(mdir),
+            None => Err(Error::GetMaildirByNameNotFoundError(name.to_owned())),
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = MaildirsEntry> + '_ {
         WalkDir::new(&self.root)
             .follow_links(true)
             .into_iter()
@@ -429,103 +441,58 @@ impl Maildirs {
                 entry
                     .file_name()
                     .to_str()
-                    .map(|s| {
-                        if self.maildirpp {
-                            s.starts_with(".")
-                        } else {
-                            !s.starts_with(".")
-                        }
-                    })
+                    .map(|s| !self.maildirpp || s.starts_with("."))
                     .unwrap_or(false)
             })
             .filter_map(|entry| {
-                let mdir = Maildir::from(entry.into_path());
-                if mdir.exists() {
-                    Some(mdir)
+                let name = if self.maildirpp {
+                    if entry.path() == self.root {
+                        return Some(MaildirsEntry {
+                            maildirpp: self.maildirpp,
+                            maildir: Maildir::from(&self.root),
+                            name: self.root.file_name()?.to_str()?.to_owned(),
+                        });
+                    }
+
+                    let subpath = entry.path().strip_prefix(&self.root).unwrap();
+                    let mut name = PathBuf::new();
+
+                    for component in subpath.components() {
+                        if let Component::Normal(component) = component {
+                            let component = component.to_string_lossy();
+                            name.push(component.trim_start_matches('.'))
+                        }
+                    }
+
+                    name.to_str()?.to_owned()
+                } else {
+                    entry
+                        .path()
+                        .strip_prefix(&self.root)
+                        .ok()?
+                        .to_str()?
+                        .to_owned()
+                };
+
+                Some(MaildirsEntry {
+                    maildirpp: self.maildirpp,
+                    maildir: Maildir::from(entry.into_path()),
+                    name,
+                })
+            })
+            .filter_map(|entry| {
+                if entry.maildir.exists() {
+                    Some(entry)
                 } else {
                     None
                 }
             })
-            .chain(if self.maildirpp {
-                Some(Maildir::from(&self.root))
-            } else {
-                None
-            })
-    }
-
-    pub fn find(&self, name: impl AsRef<str>) -> Result<Option<Maildir>> {
-        let name = if self.maildirpp {
-            String::from(".") + name.as_ref()
-        } else {
-            name.as_ref().to_owned()
-        };
-
-        let mdir = WalkDir::new(&self.root)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(|entry| entry.ok())
-            .find_map(|entry| {
-                let matches_name = entry
-                    .file_name()
-                    .to_str()
-                    .map(|file_name| file_name == name)
-                    .unwrap_or(false);
-
-                if matches_name {
-                    Some(Maildir::from(entry.into_path()))
-                } else {
-                    None
-                }
-            });
-
-        match mdir {
-            None => Ok(None),
-            Some(mdir) if mdir.exists() => Ok(Some(mdir)),
-            Some(mdir) => Err(Error::GetMaildirByNameInvalidError(
-                mdir.path().to_owned(),
-                name.to_owned(),
-            )),
-        }
-    }
-
-    pub fn get(&self, name: impl AsRef<str>) -> Result<Maildir> {
-        let name = name.as_ref();
-        match self.find(name)? {
-            Some(mdir) => Ok(mdir),
-            None => Err(Error::GetMaildirByNameNotFoundError(name.to_owned())),
-        }
     }
 
     pub fn remove(&self, name: impl AsRef<str>) -> Result<()> {
-        let name_to_delete = name.as_ref();
-        let mdir = WalkDir::new(&self.root)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(|entry| entry.ok())
-            .find_map(|entry| {
-                let matches_name = entry
-                    .file_name()
-                    .to_str()
-                    .map(|name| name == name_to_delete)
-                    .unwrap_or(false);
-
-                if matches_name {
-                    Some(Maildir::from(entry.into_path()))
-                } else {
-                    None
-                }
-            });
-
-        match mdir {
-            Some(mdir) => {
-                mdir.remove_all()?;
-                Ok(())
-            }
-            None => {
-                let name = name_to_delete.to_owned();
-                Err(Error::RemoveMaildirByNameNotFoundError(name))
-            }
-        }
+        let mdir = self.maildir(name);
+        mdir.remove_all()?;
+        Ok(())
     }
 }
 
@@ -534,6 +501,13 @@ impl Hash for Maildirs {
         self.root.hash(state);
         self.maildirpp.hash(state);
     }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct MaildirsEntry {
+    pub maildirpp: bool,
+    pub maildir: Maildir,
+    pub name: String,
 }
 
 // =============================== ENTRY ================================
