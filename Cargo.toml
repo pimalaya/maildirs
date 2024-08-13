@@ -2,14 +2,14 @@
 name = "maildirs"
 version = "0.2.0"
 description = "Rust library to manage collections of Maildir"
-homepage = "https://git.sr.ht/~soywod/maildir"
+homepage = "https://git.sr.ht/~soywod/maildirs"
 documentation = "https://docs.rs/maildirs/latest/maildirs/"
-repository = "https://git.sr.ht/~soywod/maildir"
+repository = "https://git.sr.ht/~soywod/maildirs"
 authors = ["soywod <clement.douin@posteo.net>"]
 edition = "2021"
 license = "MIT"
-categories = ["email", "network-programming"]
-keywords = ["email", "maildir", "imap", "smtp", "sendmail"]
+categories = ["email", "filesystem"]
+keywords = ["mail", "email", "maildir", "maildir++", "filesystem"]
 
 [package.metadata.docs.rs]
 all-features = true
