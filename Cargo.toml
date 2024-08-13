@@ -23,4 +23,4 @@ tempfile = "3.8"
 [dependencies]
 gethostname = "0.4"
 thiserror = "1.0"
-walkdir = "2.3"
+walkdir = "2.5"
