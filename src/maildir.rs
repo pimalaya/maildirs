@@ -159,18 +159,27 @@ impl Maildir {
         Ok(())
     }
 
+    /// Removes the cur, new and tmp directories from the current
+    /// Maildir.
+    ///
+    /// This function does not remove the root directory. If you want
+    /// to do so, see [`Maildir::remove_all`].
     pub fn remove(&self) -> Result<()> {
-        fs::remove_dir(&self.cur)?;
-        fs::remove_dir(&self.new)?;
-        fs::remove_dir(&self.tmp)?;
-
-        fs::remove_dir(&self.root)?;
+        fs::remove_dir_all(&self.cur)?;
+        fs::remove_dir_all(&self.new)?;
+        fs::remove_dir_all(&self.tmp)?;
 
         Ok(())
     }
 
+    /// Removes the current Maildir.
+    ///
+    /// This function removes the cur, new and tmp directories as well
+    /// as the root directory of the current Maildir. See also
+    /// [`Maildir::remove`].
     pub fn remove_all(&self) -> Result<()> {
         fs::remove_dir_all(&self.root)?;
+
         Ok(())
     }
 
@@ -489,7 +498,25 @@ impl Maildirs {
             })
     }
 
+    /// Removes the cur, new and tmp directories from the Maildir
+    /// matching the given name.
+    ///
+    /// This function does not remove the root directory, nor its
+    /// nested folders. If you want to do so, see
+    /// [`Maildirs::remove_all`].
     pub fn remove(&self, name: impl AsRef<str>) -> Result<()> {
+        let mdir = self.maildir(name);
+        mdir.remove()?;
+        Ok(())
+    }
+
+    /// Removes the Maildir matching the given name, including nested
+    /// Maildirs.
+    ///
+    /// This function removes the cur, new and tmp directories as well
+    /// as the root directory of the matching Maildir and its nested
+    /// Maildirs. See also [`Maildirs::remove`].
+    pub fn remove_all(&self, name: impl AsRef<str>) -> Result<()> {
         let mdir = self.maildir(name);
         mdir.remove_all()?;
         Ok(())

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `Maildirs::remove_all` function
+
+### Changed
+
+- Changed `Maildir::remove` behaviour
+
+  This function now removes `cur`, `new` and `tmp` folders without removing the root folder of the current Maildir.
+
 ## [0.2.0] - 2024-08-13
 
 ### Changed
