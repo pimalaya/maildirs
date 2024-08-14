@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "maildirs"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "gethostname",
  "mail-parser",

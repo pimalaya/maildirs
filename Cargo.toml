@@ -1,6 +1,6 @@
 [package]
 name = "maildirs"
-version = "0.2.0"
+version = "0.2.1"
 description = "Rust library to manage collections of Maildir"
 homepage = "https://git.sr.ht/~soywod/maildirs"
 documentation = "https://docs.rs/maildirs/latest/maildirs/"
