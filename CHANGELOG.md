@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Changed `MaildirEntry::copy` and `MaildirEntry::r#move` signature
+
+  Both now return a `Result<Option<PathBuf>>`: `Some` when a maildir entry is moved and `None` when it is not moved (for example, when source and destination path are the same).
+
 ## [0.2.1] - 2024-08-14
 
 ### Added

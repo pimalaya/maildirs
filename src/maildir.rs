@@ -703,26 +703,28 @@ impl MaildirEntry {
         Ok(())
     }
 
-    pub fn copy(&self, mdir: &Maildir) -> Result<()> {
+    pub fn copy(&self, mdir: &Maildir) -> Result<Option<PathBuf>> {
         if Some(mdir.cur()) == self.path().parent() {
-            return Ok(());
+            return Ok(None);
         }
 
         let file_name = self.file_name()?;
-        fs::copy(self.path(), mdir.cur().join(file_name))?;
+        let dest = mdir.cur().join(file_name);
+        fs::copy(self.path(), &dest)?;
 
-        Ok(())
+        Ok(Some(dest))
     }
 
-    pub fn r#move(&self, mdir: &Maildir) -> Result<()> {
+    pub fn r#move(&self, mdir: &Maildir) -> Result<Option<PathBuf>> {
         if Some(mdir.cur()) == self.path().parent() {
-            return Ok(());
+            return Ok(None);
         }
 
         let file_name = self.file_name()?;
-        fs::rename(self.path(), mdir.cur().join(file_name))?;
+        let dest = mdir.cur().join(file_name);
+        fs::rename(self.path(), &dest)?;
 
-        Ok(())
+        Ok(Some(dest))
     }
 
     pub fn remove(&self) -> Result<()> {
